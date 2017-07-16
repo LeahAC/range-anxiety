@@ -26,8 +26,8 @@ public class Application {
         
         {//System.out.println(result[i]+" ");
         }
-        network.converttoJson(result);
-        
+       
+        network.converttoJSON(result);
         long source, target;
         
         source= network.getRandomVertexId();

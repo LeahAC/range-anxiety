@@ -14,6 +14,9 @@ import java.util.Collection;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import org.json.simple.JSONObject;
+import org.json.simple.JSONArray;
+
 
 import org.openstreetmap.osmosis.core.container.v0_6.EntityContainer;
 import org.openstreetmap.osmosis.core.domain.v0_6.Entity;
@@ -37,7 +40,8 @@ import com.rangeanxiety.app.entities.Vertex;
 @Repository
 public class Network {
     private Multimap<Long, Double> ver = ArrayListMultimap.create();
-
+    
+     
     private Map<Long, Vertex> vertices = new HashMap<>();
 
     private Multimap<Long, Edge> edges = MultimapBuilder.hashKeys().hashSetValues().build();
@@ -57,6 +61,7 @@ public class Network {
         OsmosisReader reader = new OsmosisReader(bis);
         // The sink serves as a callback, reacting on any nodes and ways found
         reader.setSink(new Sink() {
+        
 
             @Override
             public void initialize(Map<String, Object> arg0) {
@@ -79,16 +84,18 @@ public class Network {
                     case Way:
                         Way way = (Way) entity;
                         List<WayNode> nodes = way.getWayNodes();
-
+                       
                         for (int i = 1; i < nodes.size(); i++) {
 
                             long from = nodes.get(i - 1).getNodeId();
-
+                             
                             long to = nodes.get(i).getNodeId();
-
+                            
                             edges.put(from, new Edge(Double.POSITIVE_INFINITY, to));
 
                             edges.put(to, new Edge(Double.POSITIVE_INFINITY, from));
+                            
+                            
                         }
 
                         break;
@@ -138,13 +145,16 @@ public class Network {
         return randomKey;
     }
 
-
     public void converttoJson(long arr[]) throws Exception {
+   
 
         List<DataObject> objList = new ArrayList<DataObject>();
-
+        
+   
+   
         for (int i = 0; i < 50; i++) {
             objList.add(new DataObject( arr[i], ver.get(arr[i])) );
+            
         }
 
         String json = new Gson().toJson(objList);
@@ -163,7 +173,41 @@ public class Network {
             }
         }
 
+
+
     }
+    
+    public void converttoJSON(long arr[])throws Exception
+    {
+    
+  List<DataObject> obj = new ArrayList<DataObject>();
+        
+JSONObject feature = new JSONObject();
+JSONArray coor = new JSONArray();
+
+JSONObject geometry = new JSONObject();
+geometry.put("type", "Polygon");
+for (int i = 0; i < 50; i++) {
+            coor.add(ver.get(arr[i]));
+            
+            }
+geometry.put("coordinates", coor);
+feature.put("geometry",geometry);
+
+    
+      FileWriter file = new FileWriter("output.geoJSON");
+      
+      try {
+			file.write(feature.toJSONString());
+			System.out.println("Successfully Copied JSON Object to File...");}
+			catch(IOException e){e.printStackTrace();}
+			finally {file.flush();
+			file.close();}
+    }
+  
+    
+   
+
 
     private static class DataObject {
         private long key;
@@ -172,7 +216,9 @@ public class Network {
         public DataObject(long key, Collection<Double> coordinates) {
             this.key = key;
             this.coordinates = coordinates;
+            
         }
     }
-
+    
+   
 }
