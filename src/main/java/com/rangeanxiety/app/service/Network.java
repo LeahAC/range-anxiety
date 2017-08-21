@@ -1,178 +1,314 @@
 package com.rangeanxiety.app.service;
 
-import java.io.*;
-import java.lang.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.Collection;
-
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-
-import org.openstreetmap.osmosis.core.container.v0_6.EntityContainer;
-import org.openstreetmap.osmosis.core.domain.v0_6.Entity;
-import org.openstreetmap.osmosis.core.domain.v0_6.Node;
-import org.openstreetmap.osmosis.core.domain.v0_6.Way;
-import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;
-import org.openstreetmap.osmosis.core.task.v0_6.Sink;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
+import com.rangeanxiety.app.api.Marker;
+import com.rangeanxiety.app.api.Polygon;
+import com.rangeanxiety.app.helper.Haversine;
+import com.rangeanxiety.app.persistence.MemPersistence;
+import com.rangeanxiety.app.persistence.Persistence;
+import com.rangeanxiety.app.persistence.POsmHandler;
+import de.topobyte.osm4j.core.access.OsmInputException;
+import de.topobyte.osm4j.pbf.seq.PbfReader;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
+import de.topobyte.osm4j.core.model.impl.Node;
 
-import com.google.common.collect.Multimap;
-import com.google.common.collect.MultimapBuilder;
-import com.google.common.collect.ArrayListMultimap;
-
-
-import crosby.binary.osmosis.OsmosisReader;
-import com.rangeanxiety.app.entities.Edge;
-import com.rangeanxiety.app.entities.Vertex;
+import java.io.*;
+import java.util.*;
 
 
 @Repository
 public class Network {
-    private Multimap<Long, Double> ver = ArrayListMultimap.create();
 
-    private Map<Long, Vertex> vertices = new HashMap<>();
+    @Autowired
+    Haversine hav;
+    @Autowired
+    Polygon polygon;
+    @Autowired
+    Marker marker;
 
-    private Multimap<Long, Edge> edges = MultimapBuilder.hashKeys().hashSetValues().build();
+    public Multimap<Long, Double> vertices = ArrayListMultimap.create();
 
-
-    public void initialize() throws Exception {
-        readOSMFile("test.osm.pbf");
-        // computeEdgeDistances();
-
-    }
-
-    private void readOSMFile(String filename) throws FileNotFoundException {
-        // On booting up, load the data from file
-        File testFile = new File(filename);
-        FileInputStream fis = new FileInputStream(testFile);
-        BufferedInputStream bis = new BufferedInputStream(fis);
-        OsmosisReader reader = new OsmosisReader(bis);
-        // The sink serves as a callback, reacting on any nodes and ways found
-        reader.setSink(new Sink() {
-
-            @Override
-            public void initialize(Map<String, Object> arg0) {
-                // do nothing
-            }
-
-            @Override
-            public void process(EntityContainer entityContainer) {
-                Entity entity = entityContainer.getEntity();
-                switch (entity.getType()) {
-                    case Node:
-                        Node node = (Node) entity;
-                        ver.put(node.getId(), node.getLatitude());
-                        ver.put(node.getId(), node.getLongitude());
+    private long vertexKey;
+    private int count, nodecount = 0;
+    private PbfReader reader;
+    private POsmHandler handler;
+    private Persistence db;
 
 
-                        vertices.put(node.getId(), new Vertex(node.getLatitude(), node.getLongitude()));
+    public void readOSMFile() throws FileNotFoundException {
+        String filename = "Jordan.osm.pbf";
 
-                        break;
-                    case Way:
-                        Way way = (Way) entity;
-                        List<WayNode> nodes = way.getWayNodes();
+        reader = new PbfReader(filename, false);
 
-                        for (int i = 1; i < nodes.size(); i++) {
-
-                            long from = nodes.get(i - 1).getNodeId();
-
-                            long to = nodes.get(i).getNodeId();
-
-                            edges.put(from, new Edge(Double.POSITIVE_INFINITY, to));
-
-                            edges.put(to, new Edge(Double.POSITIVE_INFINITY, from));
-                        }
-
-                        break;
-                    default:
-                        break;
-                }
-
-            }
-
-            @Override
-            public void complete() {
-                // do nothing
-            }
-
-            @Override
-            public void release() {
-                // do nothing
-            }
-
-        });
-        reader.run();
-    }
+        db = new MemPersistence();
 
 
-    public long[] get50RandomVertexId() {
-        Random random = new Random();
-        List<Long> keys = new ArrayList<Long>(ver.keySet());
-        long arr[] = new long[50];
-        int i;
-        System.out.println("To be converted to Json/GeoJson");
-        for (i = 0; i < 50; i++) {
-            long randomKey = keys.get(random.nextInt(keys.size()));
-            System.out.println("i " + i + "  " + "key" + " " + randomKey + "  " + "value" + ver.get(randomKey));
-            arr[i] = randomKey;
-
-
-        }
-
-        return (arr);
-
-    }
-
-    public long getRandomVertexId() {
-        Random random = new Random();
-        List<Long> keys = new ArrayList<Long>(ver.keySet());
-        long randomKey = keys.get(random.nextInt(keys.size()));
-        return randomKey;
-    }
-
-
-    public void converttoJson(long arr[]) throws Exception {
-
-        List<DataObject> objList = new ArrayList<DataObject>();
-
-        for (int i = 0; i < 50; i++) {
-            objList.add(new DataObject( arr[i], ver.get(arr[i])) );
-        }
-
-        String json = new Gson().toJson(objList);
-
-        BufferedWriter writer = null;
+        handler = new POsmHandler(db);
+        reader.setHandler(handler);
         try {
-            writer = new BufferedWriter(new FileWriter("Output.json"));
-            writer.write(json);
+            reader.read();
+            nodecount = handler.numNodes;
+            vertices = handler.ver;
 
-        } catch (IOException e) {
-        } finally {
-            try {
-                if (writer != null)
-                    writer.close();
-            } catch (IOException e) {
+        } catch (OsmInputException e) {
+        }
+
+    }
+
+
+    public long[] getVertexId() {
+
+
+        List<Long> keys = new ArrayList<Long>(vertices.keySet());
+        long arr[] = new long[nodecount];
+        int i = 0;
+
+        String result = null;
+        for (Long key : keys) {
+            arr[i] = key;
+            i++;
+        }
+        return arr;
+    }
+
+    public double getRandomLat() {
+
+        double lat;
+        Random random = new Random();
+        List<Long> keys = new ArrayList<Long>(vertices.keySet());
+        long randomKey = keys.get(random.nextInt(keys.size()));
+        System.out.println("Random key " + randomKey);
+        vertexKey = randomKey;
+        Collection<Double> coor = vertices.get(vertexKey);
+        lat = coor.iterator().next();
+        System.out.println("Latitude " + lat);
+        return lat;
+    }
+
+
+    public double getRandomLon() {
+
+        double lat, lon;
+        Collection<Double> coor = vertices.get(vertexKey);
+        lat = coor.iterator().next();
+        Iterator<Double> iter = coor.iterator();
+        iter.next();
+        lon = iter.next();
+        System.out.println("Longitude " + lon);
+
+        return lon;
+    }
+
+    public double getLat(long key) {
+        double lat;
+        Collection<Double> coor = vertices.get(key);
+        lat = coor.iterator().next();
+
+        return lat;
+    }
+
+    public double getLon(long key) {
+        double lon, lat;
+        Collection<Double> coor = vertices.get(key);
+        lat = coor.iterator().next();
+        Iterator<Double> iter = coor.iterator();
+        iter.next();
+        lon = iter.next();
+        return lon;
+    }
+
+    //Call getnodes
+    public String getNodes(double lat, double lng, double range, int choice)//range in miles
+
+    {
+        long arr[] = new long[nodecount];
+        long key[] = new long[nodecount];
+        String result = null;
+        arr = getVertexId();
+
+        double lat1, lon1;
+        lat1 = lat;
+        lon1 = lng;
+
+
+        count = 0;
+        double lat2, lon2;
+
+        for (int i = 0; i < nodecount; i++) {
+            lat2 = getLat(arr[i]);
+            lon2 = getLon(arr[i]);
+            double checkdis = hav.Havdistance(lat1, lon1, lat2, lon2);
+            if ((checkdis > (range - 0.1)) && (checkdis < (range + 0.1))) {
+                key[count] = arr[i];
+
+                count++;
             }
         }
 
+
+        result = arrangedCoordinate(key, choice);
+
+        return result;
     }
 
-    private static class DataObject {
-        private long key;
-        private Collection<Double> coordinates;
+    public String getNodes(long nodeId, double range, int choice)//range in Miles
 
-        public DataObject(long key, Collection<Double> coordinates) {
-            this.key = key;
-            this.coordinates = coordinates;
+    {
+        Node startNode = db.getNodeById(nodeId);
+        if (startNode == null) {
+            return null;
+        } else {
+            long arr[] = new long[nodecount];
+            long key[] = new long[nodecount];
+            String result = null;
+            arr = getVertexId();
+
+            double lat1, lon1;
+            lat1 = startNode.getLatitude();
+            lon1 = startNode.getLongitude();
+
+
+            count = 0;
+            double lat2, lon2;
+
+            for (int i = 0; i < nodecount; i++) {
+                lat2 = getLat(arr[i]);
+                lon2 = getLon(arr[i]);
+                double checkdis = hav.Havdistance(lat1, lon1, lat2, lon2);
+                if ((checkdis > (range - 0.1)) && (checkdis < (range + 0.1))) {
+                    key[count] = arr[i];
+
+                    count++;
+                }
+            }
+
+
+            result = arrangedCoordinate(key, choice);
+
+            return result;
         }
     }
+
+    public String arrangedCoordinate(long arr[], int choice) {
+
+
+        double DistanceMatrix[][] = new double[count][count];
+        int i, j;
+        String result = null;
+        double lat1, lon1, lat2, lon2;
+        for (i = 0; i < count; i++) {
+            lat1 = getLat(arr[i]);
+            lon1 = getLon(arr[i]);
+            for (j = 0; j < count; j++) {
+                if (i == j) {
+                    DistanceMatrix[i][j] = 0d;
+                    continue;
+                } else {
+                    lat2 = getLat(arr[j]);
+                    lon2 = getLon(arr[j]);
+                    DistanceMatrix[i][j] = hav.Havdistance(lat1, lon1, lat2, lon2);
+
+                }
+            }
+        }
+        //Call and pass DistanceMatrix to TravellingSalesman;
+
+        try {
+            result = travellingSalesman(DistanceMatrix, arr, choice);
+        } catch (Exception e) {
+            //do nothing
+        }
+
+
+        return result;
+    }
+
+    public String travellingSalesman(double DistanceMatrix[][], long arr[], int choice) throws Exception {
+        Stack<Integer> stack = new Stack<Integer>();
+        long newarr[] = new long[count];
+        newarr[0] = arr[0];
+        int[] visited = new int[count];
+        for (int i = 0; i < count; i++) {
+            visited[i] = 0;
+        }
+        int keycount = 1;
+        String result = null;
+        visited[0] = 1;
+        stack.push(0);
+        int element, dst = 0, i;
+        double min = Integer.MAX_VALUE;
+        boolean minFlag = false;
+
+        while (!stack.isEmpty()) {
+            element = stack.peek();
+            i = 0;
+            min = Integer.MAX_VALUE;
+            while (i < count) {
+                if (DistanceMatrix[element][i] > 0 && visited[i] == 0) {
+                    if (min > DistanceMatrix[element][i]) {
+                        min = DistanceMatrix[element][i];
+                        dst = i;
+                        minFlag = true;
+                    }
+                }
+                i++;
+            }
+            if (minFlag) {
+                visited[dst] = 1;
+
+                newarr[keycount] = arr[dst];
+                stack.push(dst);
+
+                keycount++;
+                minFlag = false;
+                continue;
+            }
+            stack.pop();
+        }
+
+
+        int len = 1;
+        long longArr[] = new long[count];
+        int index = 0, c = 0;
+        longArr[0] = newarr[0];
+        double lat1, lon1, lat2, lon2;
+        while ((len) < count) {
+            lat1 = getLat(newarr[index]);
+            lon1 = getLon(newarr[index]);
+            lat2 = getLat(newarr[len]);
+            lon2 = getLon(newarr[len]);
+            double distance = hav.Havdistance(lat1, lon1, lat2, lon2);
+
+            if (distance < 1) {
+                len++;
+
+            } else {
+                longArr[++c] = newarr[len];
+                index = len;
+                len++;
+
+            }
+        }
+
+
+        if (newarr == null) {
+            return null;
+        }
+        switch (choice) {
+            case 1:
+                result = polygon.convertToJSONpolygon(longArr, c + 1);
+                break;
+            case 2:
+                result = marker.convertToJSONmarker(longArr, c + 1);
+                break;
+            default:
+                break;
+        }
+
+        return result;
+    }
+
 
 }
